@@ -1,5 +1,5 @@
-node,name,peak_MW
-1,North,400
-2,East,250
-3,South,600
-4,West,150
+node,name,peak_MW,zone
+1,North,400,NE
+2,East,250,NE
+3,South,600,SW
+4,West,150,SW
