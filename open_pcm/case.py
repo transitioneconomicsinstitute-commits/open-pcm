@@ -8,7 +8,7 @@ def num(v,d=0.):
 
 CAL=pd.date_range('2001-01-01',periods=8760,freq='h')  # non-leap reference calendar
 DEFAULTS=dict(base_year=2026,discount_rate=0.08,voll_usd_mwh=1500.,ref_node=None,demand_growth=0.0,
-              line_loss_frac=0.015,flow_cost_usd_mwh=0.01)
+              line_loss_frac=0.015,flow_cost_usd_mwh=0.01,mode='nodal',imbalance_penalty_usd_mwh=None)
 
 class Case:
     def __init__(s,path):
