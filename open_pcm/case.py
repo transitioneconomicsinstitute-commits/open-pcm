@@ -22,6 +22,9 @@ class Case:
         s.cfg={**DEFAULTS,**cfg}
         s.nodes=r('nodes.csv'); s.generators=r('generators.csv'); s.branches=r('branches.csv')
         s.profiles=r('profiles.csv')
+        s.storage=r('storage.csv', req=False)
+        if s.storage is None:
+            s.storage=pd.DataFrame(columns=['name','node','mw','mwh','efficiency','initial_mwh','vom'])
         assert len(s.profiles)==8760, 'profiles.csv must have 8760 rows'
         if s.cfg['ref_node'] is None: s.cfg['ref_node']=int(s.nodes.node.iloc[0])
     def peaks(s,year):

@@ -20,18 +20,22 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np, pandas as pd
 from .case import Case
-from .lp import LP
-from .model import build, solve, extract
+from .lp import LP, check_status
+from .model import build, solve, extract, has_storage, terminal_storage
 
 class Slice(Case):
     """In-memory case. Load growth matches Case."""
-    def __init__(s, cfg, nodes, generators, branches, profiles):
+    def __init__(s, cfg, nodes, generators, branches, profiles, storage=None):
         s.path=None
         s.cfg=dict(cfg)
         s.nodes=nodes.reset_index(drop=True).copy()
         s.generators=generators.reset_index(drop=True).copy()
         s.branches=branches.reset_index(drop=True).copy()
         s.profiles=profiles.copy()
+        if storage is None:
+            s.storage=pd.DataFrame(columns=['name','node','mw','mwh','efficiency','initial_mwh','vom'])
+        else:
+            s.storage=storage.reset_index(drop=True).copy()
 
 def zone_map(case):
     """bus id -> zone name. Raises if any bus has no zone."""
@@ -94,10 +98,16 @@ def aggregate(case):
                                  MVA=t['mva'], x_pu=0.1, loss_pct=t['loss']*100) for t in ties])
     if branches.empty:
         branches=pd.DataFrame(columns=['name','from','to','MVA','x_pu','loss_pct'])
+    stores=case.storage.copy() if has_storage(case) else case.storage.iloc[0:0].copy()
+    if len(stores):
+        missing=[int(n) for n in stores.node.astype(int) if int(n) not in zmap]
+        if missing:
+            raise ValueError('storage bus not in the case: '+', '.join(str(n) for n in missing))
+        stores['node']=stores.node.astype(int).map(lambda n: zid[zmap[int(n)]])
     cfg=dict(case.cfg)
     cfg['ref_node']=zid[zmap[int(case.cfg['ref_node'])]]
     meta=dict(zmap=zmap, zones=zones, zid=zid, ties=ties)
-    return Slice(cfg, nodes, gens, branches, case.profiles), meta
+    return Slice(cfg, nodes, gens, branches, case.profiles, stores), meta
 
 def transfers_frame(meta):
     return pd.DataFrame([dict(name=t['name'], frm=t['za'], to=t['zb'],
@@ -150,9 +160,6 @@ def _zonal_tables(model, case, meta):
     out['zones']=zones_frame(case, meta)
     out['transfers']=transfers_frame(meta)
     return out
-
-def _optimal(status, what):
-    if status!='Optimal': raise RuntimeError(f'{what}: {status}')
 
 def penalty_price(case):
     """$/MWh on stage-C slack. Defaults to the value of lost load."""
@@ -232,15 +239,20 @@ def zone_slice(case, zone, zmap):
     prefer=int(cfg['ref_node'])
     if prefer not in keep: prefer=int(nodes.node.iloc[0])
     cfg['ref_node']=prefer
-    sl=Slice(cfg, nodes, gens, branches, case.profiles)
+    if has_storage(case):
+        st=case.storage[case.storage.node.astype(int).isin(keep)].copy()
+    else:
+        st=case.storage.iloc[0:0].copy()
+    sl=Slice(cfg, nodes, gens, branches, case.profiles, st)
     return sl, component_refs(sl.nodes, sl.branches, prefer)
 
 def _solve_zone(job):
-    sl, refs, hours, year, method, inj, pen, zone=job
-    m=solve(build(sl, hours, year=year, injections=inj, feas_penalty=pen, refs=refs), method)
-    _optimal(m['status'], f'zonal-nodal stage B zone {zone}')
+    sl, refs, hours, year, method, inj, pen, zone, time_limit, accept_gap=job
+    m=solve(build(sl, hours, year=year, injections=inj, feas_penalty=pen, refs=refs), method,
+            time_limit=time_limit, accept_gap=accept_gap)
+    solved=check_status(m['status'], m['report'], accept_gap, f'zonal-nodal stage B zone {zone}')
     x=m['x']
-    return dict(zone=zone, result=extract(m),
+    return dict(zone=zone, result=extract(m), solved=solved,
                 short=np.array(x[m['short']].sum(0), float),
                 spill=np.array(x[m['spill']].sum(0), float))
 
@@ -274,7 +286,7 @@ def _stitch(case, parts):
     if len(flows): flows=flows.sort_values(['name','frm','to']).reset_index(drop=True)
     return dict(price=price, gen=gen, use=use, flows=flows)
 
-def stage_c(meta, hours, received, deficit, penalty, flow_cost, method):
+def stage_c(meta, hours, received, deficit, penalty, flow_cost, method, time_limit=None, accept_gap=None):
     """Move inter-zone flows to cover `deficit`, then price any remainder.
 
     received and deficit are zone -> (hours,) arrays. The balance asked of
@@ -293,13 +305,13 @@ def stage_c(meta, hours, received, deficit, penalty, flow_cost, method):
         lp.a(bal[ia], fp, -1); lp.a(bal[ia], fm, 1-loss)
         lp.a(bal[ib], fp, 1-loss); lp.a(bal[ib], fm, -1)
         flow_vars.append((tie, fp, fm))
-    status,x,_dual=lp.solve(method)
-    _optimal(status, 'zonal-nodal stage C')
+    status,x,_dual=lp.solve(method, time_limit=time_limit, accept_gap=accept_gap)
+    solved=check_status(status, lp.report, accept_gap, 'zonal-nodal stage C')
     up_x=np.clip(x[up], 0, None); down_x=np.clip(x[down], 0, None)
     flows=[]
     for tie,fp,fm in flow_vars:
         flows.append((tie, np.clip(x[fp],0,None), np.clip(x[fm],0,None)))
-    return up_x, down_x, flows
+    return up_x, down_x, flows, solved
 
 def _imbalance_frame(meta, hours, short, spill, up, down, penalty):
     zi={z:i for i,z in enumerate(meta['zones'])}
@@ -324,19 +336,23 @@ def _balancing_flows(hours, receipts, cleared):
                              fwd_MW=float(fp[t]), rev_MW=float(fm[t])))
     return pd.DataFrame(rows)
 
-def run_zonal(case, hours, year, method='ipm', log=print):
+def run_zonal(case, hours, year, method='ipm', log=print, time_limit=None, accept_gap=None, storage_state=None):
     view, meta=aggregate(case)
-    m=solve(build(view, hours, year=year, transport=True), method)
-    _optimal(m['status'], 'zonal solve')
+    m=solve(build(view, hours, year=year, transport=True, storage_state=storage_state), method,
+            time_limit=time_limit, accept_gap=accept_gap)
+    solved=check_status(m['status'], m['report'], accept_gap, 'zonal solve')
     out=_zonal_tables(m, case, meta)
     out['mode']='zonal'
     log(f'dispatch {year} hours {int(hours[0])}-{int(hours[-1])} {m["status"]} mode zonal')
-    return out
+    return out, terminal_storage(m), [solved]
 
-def run_zonal_nodal(case, hours, year, method='ipm', workers=None, log=print):
+def run_zonal_nodal(case, hours, year, method='ipm', workers=None, log=print,
+                    time_limit=None, accept_gap=None, storage_state=None):
+    if has_storage(case) or storage_state:
+        raise ValueError('zonal-nodal does not schedule storage')
     view, meta=aggregate(case)
-    mA=solve(build(view, hours, year=year, transport=True), method)
-    _optimal(mA['status'], 'zonal-nodal stage A')
+    mA=solve(build(view, hours, year=year, transport=True), method, time_limit=time_limit, accept_gap=accept_gap)
+    flags=[check_status(mA['status'], mA['report'], accept_gap, 'zonal-nodal stage A')]
     zonal=_zonal_tables(mA, case, meta)
     zonal['mode']='zonal'
     receipts=tie_receipts(mA, meta)
@@ -356,8 +372,9 @@ def run_zonal_nodal(case, hours, year, method='ipm', workers=None, log=print):
         sl, refs=zone_slice(case, zone, zmap)
         ids=[int(n) for n in sl.nodes.node.values]
         arr=np.vstack([inj[i] for i in ids]) if T else np.zeros((len(ids), 0))
-        jobs.append((sl, refs, hours, year, method, arr, pen, zone))
+        jobs.append((sl, refs, hours, year, method, arr, pen, zone, time_limit, accept_gap))
     parts=_pool_map(_solve_zone, jobs, workers)
+    for p in parts: flags.append(p['solved'])
     out=_stitch(case, parts)
     out['gen']=out['gen'].copy()
     out['gen']['zone']=out['gen'].node.astype(int).map(zmap)
@@ -367,7 +384,9 @@ def run_zonal_nodal(case, hours, year, method='ipm', workers=None, log=print):
     spill={p['zone']:p['spill'] for p in parts}
     deficit={z:short[z]-spill[z] for z in meta['zones']}
     price=penalty_price(case)
-    up,down,cleared=stage_c(meta, hours, received, deficit, price, case.cfg['flow_cost_usd_mwh'], method)
+    up,down,cleared,solved_c=stage_c(meta, hours, received, deficit, price, case.cfg['flow_cost_usd_mwh'], method,
+                                     time_limit=time_limit, accept_gap=accept_gap)
+    flags.append(solved_c)
     out['mode']='zonal-nodal'
     out['zones']=zonal['zones']
     out['transfers']=zonal['transfers']
@@ -376,5 +395,6 @@ def run_zonal_nodal(case, hours, year, method='ipm', workers=None, log=print):
     out['imbalance']=_imbalance_frame(meta, hours, short, spill, up, down, price)
     out['balancing_flows']=_balancing_flows(hours, receipts, cleared)
     total=float(out['imbalance'].penalty_usd.sum())
-    log(f'dispatch {year} hours {int(hours[0])}-{int(hours[-1])} Optimal mode zonal-nodal penalty {total:.2f}')
-    return out
+    status='Time limit reached' if any(f['flagged'] for f in flags) else 'Optimal'
+    log(f'dispatch {year} hours {int(hours[0])}-{int(hours[-1])} {status} mode zonal-nodal penalty {total:.2f}')
+    return out, {}, flags

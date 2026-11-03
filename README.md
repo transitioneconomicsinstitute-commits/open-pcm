@@ -2,7 +2,7 @@
 
 OPEN-PCM is a small production cost model for power systems, written in Python. It solves hourly dispatch with DC power flow, line losses, thermal plant fuel costs, and wind and solar profiles, using the open-source HiGHS solver. The default is one nodal linear programme. The same case can also be cleared as a zonal market, or as a zonal market followed by a nodal solve inside each zone.
 
-The core solves a contiguous block of hours. Unit commitment, storage, hydro budgets, full-year windowed runs and expansion are outside this core.
+The core solves a contiguous block of hours as one linear programme. The same hours can be solved as consecutive blocks, with storage levels carried across the joins. Unit commitment, hydro budgets and expansion are outside this core.
 
 ## Install
 
@@ -20,7 +20,7 @@ For large cases, HiGHS's parallel interior-point solver HiPO needs `pip install 
 python -m open_pcm examples/synthetic_4node out --year 2027
 ```
 
-By default this solves the first 168 hours of the year as a nodal model and writes hourly prices, generation by unit, unserved energy and line flows. Pass `--hours 0 47` for a shorter block, or `--mode zonal` to clear the example's two zones (NE and SW) instead.
+By default this solves the first 168 hours of the year as a nodal model and writes hourly prices, generation by unit, unserved energy and line flows. Pass `--hours 0 47` for a shorter block, `--blocks 48 48 72` to solve that week as three blocks, or `--mode zonal` to clear the example's two zones (NE and SW) instead.
 
 From Python:
 
@@ -30,6 +30,36 @@ case = gd.Case('examples/synthetic_4node')
 res = gd.dispatch(case, 2027)          # dict of DataFrames: price, gen, use, flows
 res = gd.dispatch(case, 2027, range(48))
 res = gd.dispatch(case, 2027, range(48), mode='zonal')
+res = gd.dispatch(case, 2027, blocks=(48, 48, 72))
+```
+
+## Blocks
+
+`blocks` solves the horizon as consecutive blocks instead of one LP. An integer is a block length; the last block is shorter when the length does not divide the horizon. A sequence of lengths has to add up to the number of hours. The storage level at the end of a block is the starting level of the next, and the tables come back in the same shape as a single solve: hourly prices, with generation, unserved energy and flows totalled over the whole horizon.
+
+This core has no unit commitment, so no on/off status is carried. Leave `blocks` unset and the run is still one LP. Blocks work in every solve mode. Storage is scheduled in a nodal or a zonal solve, not in zonal-nodal.
+
+```python
+res = gd.dispatch(case, 2027, blocks=(48, 48, 72))
+res = gd.dispatch(case, 2027, range(168), blocks=48)
+```
+
+```
+python -m open_pcm examples/synthetic_4node out --year 2027 --blocks 48 48 72
+```
+
+`storage.csv` is optional. `mw` is the charge and discharge rating, `mwh` the tank, `efficiency` the share of each charged MWh that is stored (default 1), `initial_mwh` the level at the first hour (default 0), and `vom` a cost on charge and discharge.
+
+## Time limit
+
+`time_limit` is seconds, passed through to HiGHS. A solve that stops on the limit is a failure, as is any status other than optimal, unless `accept_gap` is set. It is then kept when HiGHS has a feasible primal solution and the relative gap, or the primal-dual objective error, is at most that tolerance. `meta['flagged']` is true on that result and `meta['status']` is `Time limit reached`. An optimal solve is not flagged. With `blocks`, `meta['flagged']` is true if any block was kept this way.
+
+```python
+res = gd.dispatch(case, 2027, time_limit=60, accept_gap=1e-4)
+```
+
+```
+python -m open_pcm examples/synthetic_4node out --year 2027 --time-limit 60 --accept-gap 1e-4
 ```
 
 ## Example data
@@ -47,6 +77,7 @@ A case is a folder of CSV files:
 | `profiles.csv` | 8760 rows: `load` and any wind or solar capacity-factor columns |
 | `generators.csv` | `name`, `node`, `type` (`thermal`, `solar`, `wind`), `mw`, `heat_rate`, `fuel_usd_mmbtu`, `vom`, `profile` (for solar/wind) |
 | `branches.csv` | `name`, `from`, `to`, `MVA`, `x_pu`, `loss_pct` |
+| `storage.csv` | optional: `name`, `node`, `mw`, `mwh`, `efficiency`, `initial_mwh`, `vom` |
 
 ## Solve modes
 
