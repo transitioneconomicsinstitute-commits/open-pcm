@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0 (2026-11-03)
+- A horizon can be solved as consecutive blocks (`blocks` on `dispatch`, or `--blocks`). Storage levels cross each join, and the tables are stitched into one result.
+- Optional `storage.csv`: power, energy, charge efficiency and the initial level. Cases without it are unchanged. Zonal-nodal does not schedule storage.
+- `time_limit` on `LP.solve` and `dispatch`. A solve that hits the limit is kept when `accept_gap` is set and the relative gap or primal-dual objective error is within it. `meta['flagged']` is then true.
+
 ## 0.3.0 (2026-10-29)
 - Solve mode `nodal` (default), `zonal`, or `zonal-nodal`, set in `case.json` or with `--mode`.
 - Zonal mode groups buses by a `zone` column or a `zones` map. Inter-zone transfer limits are the summed tie-line ratings.
