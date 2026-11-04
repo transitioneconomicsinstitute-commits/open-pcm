@@ -11,7 +11,7 @@ DEFAULTS=dict(base_year=2026,discount_rate=0.08,voll_usd_mwh=1500.,ref_node=None
               line_loss_frac=0.015,flow_cost_usd_mwh=0.01,mode='nodal',imbalance_penalty_usd_mwh=None)
 
 class Case:
-    def __init__(s,path):
+    def __init__(s,path,validate=True):
         s.path=path
         def r(f,req=True):
             p=os.path.join(path,f)
@@ -25,8 +25,13 @@ class Case:
         s.storage=r('storage.csv', req=False)
         if s.storage is None:
             s.storage=pd.DataFrame(columns=['name','node','mw','mwh','efficiency','initial_mwh','vom'])
-        assert len(s.profiles)==8760, 'profiles.csv must have 8760 rows'
-        if s.cfg['ref_node'] is None: s.cfg['ref_node']=int(s.nodes.node.iloc[0])
+        if s.cfg['ref_node'] is None and len(s.nodes) and 'node' in s.nodes.columns:
+            try: s.cfg['ref_node']=int(s.nodes.node.iloc[0])
+            except (TypeError,ValueError): pass
+        if validate:
+            from .validate import check_case, CaseError
+            problems=check_case(s)
+            if problems: raise CaseError(problems)
     def peaks(s,year):
         """Node peak demand in MW for `year`, grown at `demand_growth` per year from `base_year`."""
         g=s.cfg['demand_growth']

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1 (2026-11-04)
+- Cases are checked when loaded. Unknown node ids, missing columns, non-numeric or negative values, zero `x_pu`, unknown generator types, profile names that are not in `profiles.csv`, capacity factors outside 0-1, and a bad `ref_node` now raise `CaseError` listing every problem with its file and row, instead of a bare `KeyError` or a divide-by-zero deep in the LP build.
+- `check_case(case)` returns the same list without raising. `Case(path, validate=False)` skips the check.
+
 ## 0.4.0 (2026-11-03)
 - A horizon can be solved as consecutive blocks (`blocks` on `dispatch`, or `--blocks`). Storage levels cross each join, and the tables are stitched into one result.
 - Optional `storage.csv`: power, energy, charge efficiency and the initial level. Cases without it are unchanged. Zonal-nodal does not schedule storage.

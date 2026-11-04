@@ -79,6 +79,18 @@ A case is a folder of CSV files:
 | `branches.csv` | `name`, `from`, `to`, `MVA`, `x_pu`, `loss_pct` |
 | `storage.csv` | optional: `name`, `node`, `mw`, `mwh`, `efficiency`, `initial_mwh`, `vom` |
 
+### Input checks
+
+`Case(path)` checks the files as it loads them and raises `CaseError` with every problem it finds, each naming the file and CSV row, e.g.
+
+```
+invalid case:
+  - generators.csv row 4 (Wind C): profile 'wnd' is not a column in profiles.csv
+  - branches.csv row 3 (L23): x_pu must be > 0, got 0
+```
+
+Use `open_pcm.check_case(case)` to get the list without an exception, or `Case(path, validate=False)` to skip the checks.
+
 ## Solve modes
 
 Set `"mode"` in `case.json`, or pass `--mode`. The flag wins over the file. The default is `nodal`, and a nodal run matches a run that never sets a mode.
