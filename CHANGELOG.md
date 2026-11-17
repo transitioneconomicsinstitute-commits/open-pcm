@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.4.2 (2026-11-17)
+- A local web UI, started with `python -m open_pcm.gui` or `open-pcm-gui`, loads a packaged example, runs a solve, and shows a summary plus an hourly price chart. It uses only the Python standard library for the server. Only cases under `examples/` can be opened.
+
 ## 0.4.1 (2026-11-04)
 - Cases are checked when loaded. Unknown node ids, missing columns, non-numeric or negative values, zero `x_pu`, unknown generator types, profile names that are not in `profiles.csv`, capacity factors outside 0-1, and a bad `ref_node` now raise `CaseError` listing every problem with its file and row, instead of a bare `KeyError` or a divide-by-zero deep in the LP build.
 - `check_case(case)` returns the same list without raising. `Case(path, validate=False)` skips the check.
