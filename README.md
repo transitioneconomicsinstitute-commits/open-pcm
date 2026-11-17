@@ -123,6 +123,22 @@ Use zonal-nodal when the day-ahead result is zonal but internal limits still hav
 
 The main price, generation, unserved and flow files are the stage B nodal results. Stage A is also written as `zonal_prices_<year>.csv` and `zonal_flows_<year>.csv`. Border balancing is `imbalance_<year>.csv` and `balancing_flows_<year>.csv`.
 
+## Local GUI
+
+A small local web page can load a packaged example, set the year, hour range and solve mode, run the model on your machine, and show a summary together with a simple hourly price chart. It uses only the Python standard library for the HTTP server, so there is nothing extra to install beyond the package itself.
+
+```
+python -m open_pcm.gui
+```
+
+or, after `pip install -e .`:
+
+```
+open-pcm-gui
+```
+
+Then open http://127.0.0.1:8760/ in a browser. The server binds to the loopback interface by default. Pass `--port` or `--host` to change the bind address. Only cases under `examples/` are offered; the packaged `synthetic_4node` example is the starting point.
+
 ## Tests
 
 ```
