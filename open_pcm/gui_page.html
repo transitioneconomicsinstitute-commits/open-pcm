@@ -28,6 +28,7 @@ table { width:100%; border-collapse:collapse; background:var(--card); margin-top
 th, td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; }
 th { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
 caption { text-align:left; font-weight:650; padding:8px 0; }
+.pick { flex-direction:row; align-items:center; gap:8px; margin-bottom:8px; }
 </style>
 </head>
 <body>
@@ -57,7 +58,10 @@ caption { text-align:left; font-weight:650; padding:8px 0; }
   <p id="status">Choose an example and press Run. The first week of the year is the default horizon.</p>
   <section id="results" hidden>
     <div class="grid" id="tiles"></div>
-    <svg id="chart" viewBox="0 0 1000 280" role="img" aria-label="Hourly mean price"></svg>
+    <label class="pick">Price shown
+      <select id="series"></select>
+    </label>
+    <svg id="chart" viewBox="0 0 1000 280" role="img" aria-label="Hourly price"></svg>
     <table id="gen">
       <caption>Generation by unit</caption>
       <thead><tr><th>Unit</th><th>Node</th><th>Type</th><th>MWh</th></tr></thead>
@@ -88,12 +92,13 @@ function tile(label, value) {
   return d;
 }
 
-function drawChart(hour, values) {
+function drawChart(hour, values, label) {
   const svg = $('chart');
   while (svg.firstChild) svg.removeChild(svg.firstChild);
   const W=1000, H=280, p={l:52,r:16,t:16,b:32};
   const iw=W-p.l-p.r, ih=H-p.t-p.b;
-  const ymin=0, ymax=Math.max(1, Math.max(...values)*1.05);
+  const lo=Math.min(...values), hi=Math.max(...values);
+  const ymin=Math.min(0, lo*1.05), ymax=Math.max(1, hi*1.05);
   const x = (i) => p.l + (hour.length<=1 ? iw/2 : iw*i/(hour.length-1));
   const y = (v) => p.t + ih*(1 - (v-ymin)/(ymax-ymin));
   const ns = 'http://www.w3.org/2000/svg';
@@ -111,7 +116,16 @@ function drawChart(hour, values) {
   }
   const pts = values.map((v,i)=>`${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
   el('polyline', {fill:'none',stroke:'#1f6b4a','stroke-width':'2',points:pts});
-  el('text', {x:p.l,y:H-8,fill:'#5b655c','font-size':'11'}, 'Hour ' + hour[0] + '–' + hour[hour.length-1] + '  ·  mean price, $/MWh');
+  el('text', {x:p.l,y:H-8,fill:'#5b655c','font-size':'11'}, 'Hour ' + hour[0] + '–' + hour[hour.length-1] + '  ·  ' + label + ', $/MWh');
+}
+
+let last = null;
+
+function redraw() {
+  if (!last) return;
+  const k = $('series').value;
+  if (k) drawChart(last.chart.hour, last.chart.series[k], 'price at ' + ($('series').selectedOptions[0].textContent));
+  else drawChart(last.chart.hour, last.chart.mean_price_usd_mwh, 'mean price');
 }
 
 function show(j) {
@@ -127,7 +141,15 @@ function show(j) {
     tile('Mean price, $/MWh', fmt(j.price_mean_usd_mwh,2)),
     tile('Price range, $/MWh', fmt(j.price_min_usd_mwh,2) + ' – ' + fmt(j.price_max_usd_mwh,2)),
   );
-  drawChart(j.chart.hour, j.chart.mean_price_usd_mwh);
+  const pick = $('series'); pick.innerHTML = '';
+  const area = j.mode === 'zonal' ? 'zone' : 'node';
+  const mean = document.createElement('option'); mean.value = ''; mean.textContent = 'Mean of all ' + area + 's'; pick.appendChild(mean);
+  const keys = Object.keys(j.chart.series).sort((a, b) => a.localeCompare(b, undefined, {numeric:true}));
+  for (const k of keys) {
+    const o = document.createElement('option'); o.value = k; o.textContent = area + ' ' + k; pick.appendChild(o);
+  }
+  last = j;
+  redraw();
   const tb = $('gen').querySelector('tbody');
   tb.innerHTML = '';
   for (const r of j.generation) {
@@ -166,6 +188,8 @@ $('form').addEventListener('submit', async (e) => {
     btn.disabled = false;
   }
 });
+
+$('series').addEventListener('change', redraw);
 
 boot();
 </script>

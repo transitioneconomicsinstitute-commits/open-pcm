@@ -44,6 +44,7 @@ def test_page(server):
     assert status == 200 and typ == 'text/html'
     text = body.decode()
     assert 'OPEN-PCM' in text and '/api/run' in text
+    assert 'id="series"' in text
 
 def test_examples_api(server):
     status, typ, body = get(server + '/api/examples')
@@ -59,6 +60,7 @@ def test_run_matches_dispatch(server):
     assert out['mode'] == 'nodal'
     assert out['hours'] == 24 and len(out['chart']['hour']) == 24
     assert len(out['chart']['mean_price_usd_mwh']) == 24
+    assert out['chart']['series'] and all(len(v) == 24 for v in out['chart']['series'].values())
     assert out['generation_MWh'] > 0
     assert out['unserved_MWh'] >= 0
     direct = P.dispatch(P.Case(gui.resolve_case(CASE)), 2027, range(24), log=lambda s: None)
