@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+- The GUI chart can show the hourly price at one node (or zone in zonal mode) as well as the mean. The axis now drops below zero when prices go negative.
+
 ## 0.4.2 (2026-11-17)
 - A local web UI, started with `python -m open_pcm.gui` or `open-pcm-gui`, loads a packaged example, runs a solve, and shows a summary plus an hourly price chart. It uses only the Python standard library for the server. Only cases under `examples/` can be opened.
 
